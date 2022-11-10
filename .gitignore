@@ -18,3 +18,5 @@
 /super-linter.log
 /super-linter.report
 /venv/
+.coverage
+junit/

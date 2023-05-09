@@ -39,6 +39,12 @@ class PascalVOC(torch.utils.data.Dataset):
                   'horse', 'motorbike', 'person', 'pottedplant', 'sheep', 'sofa',
                   'train', 'tvmonitor')
 
+    # Note: background weight set to 1.0, person weight is set to 1.0
+    #       others sclaed using person frequency
+    voc_class_weights = (1.00, 0.10, 0.08, 0.13, 0.10, 0.13, 0.06, 0.26, 0.13,
+                         0.27, 0.07, 0.07, 0.16, 0.08, 0.08, 1.00, 0.10, 0.09,
+                         0.09, 0.08, 0.08)
+
     voc_label_to_id_map = {k: v + 1 for v, k in enumerate(voc_labels)}
     voc_id_to_label_map = {v: k for k, v in voc_label_to_id_map.items()}
 
@@ -233,6 +239,7 @@ datasets = [
         'input': (3, 256, 320),
         'output': PascalVOC.voc_id_to_label_map.keys(),
         'loader': pascal_voc_2007_2012_256_320_aug_get_dataset,
-        'collate': object_detection_utils.collate_fn
+        'collate': object_detection_utils.collate_fn,
+        'weight': PascalVOC.voc_class_weights
     },
 ]

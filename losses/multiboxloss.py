@@ -15,7 +15,8 @@
     Multi-box Loss for Object Detection Models
 """
 import torch
-from torch import nn
+from torch import nn, Tensor
+from typing import Optional
 
 import utils.object_detection_utils as obj_det_utils
 
@@ -36,7 +37,8 @@ class MultiBoxLoss(nn.Module):
         SSD paper (Liu, W. et al. (2016). SSD: Single Shot MultiBox Detector,
         https://doi.org/10.1007/978-3-319-46448-0_2)
     """
-    def __init__(self, priors_cxcy, threshold=0.5, neg_pos_ratio=3, alpha=1., device='cpu'):
+    def __init__(self, priors_cxcy, threshold=0.5, neg_pos_ratio=3, alpha=1., device='cpu',
+                 weight: Optional[Tensor] = None):
         super().__init__()
         self.priors_cxcy = priors_cxcy
         self.priors_xy = obj_det_utils.cxcy_to_xy(priors_cxcy)
@@ -45,7 +47,7 @@ class MultiBoxLoss(nn.Module):
         self.alpha = alpha
 
         self.smooth_l1 = nn.SmoothL1Loss(reduction='mean')
-        self.cross_entropy = nn.CrossEntropyLoss(reduction='none')
+        self.cross_entropy = nn.CrossEntropyLoss(weight=weight, reduction='none')
 
         self.device = device
 

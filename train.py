@@ -369,10 +369,13 @@ def main():
         if isinstance(model, nn.DataParallel):
             model = model.module
 
+        args.class_weights = torch.tensor(selected_source['weight'], dtype=torch.float)
         criterion = MultiBoxLoss(priors_cxcy=model.priors_cxcy,
                                  alpha=obj_detection_params['multi_box_loss']['alpha'],
                                  neg_pos_ratio=obj_detection_params['multi_box_loss']
-                                 ['neg_pos_ratio'], device=args.device).to(args.device)
+                                 ['neg_pos_ratio'], device=args.device,
+                                 weight=args.class_weights) \
+            .to(args.device)
     else:
         if not args.regression:
             if 'weight' in selected_source:

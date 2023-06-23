@@ -153,10 +153,11 @@ class SMSMotorData(Dataset):
                  downsampling_ratio=2,
                  signal_duration_in_sec=0.5,
                  overlap_ratio=0.75, 
-                 dc_removed=True,
+                 dc_removed=False,
                  dbu_ind=False,
                  ds_after_fft=False,
-                 norm_per_ch=False):
+                 norm_per_ch=False,
+                 include_fileidx_for_analysis=False):
 
         if d_type not in ('test', 'train'):
             raise ValueError("d_type can only be set to 'test' or 'train'")
@@ -191,6 +192,7 @@ class SMSMotorData(Dataset):
         self.ds_after_fft = ds_after_fft
         self.dc_removed = dc_removed
         self.norm_per_ch=norm_per_ch
+        self.include_fileidx_for_analysis = include_fileidx_for_analysis
 
         self.num_of_features = 3
         
@@ -206,26 +208,14 @@ class SMSMotorData(Dataset):
         
         data_loader_utils.makedir_exist_ok(processed_folder)
 
-        if self.dbu_ind:
-            specs_identifier = f'anomaly_label_{self.anomaly_label}_' + \
-                            f'ds_ratio_{self.downsampling_ratio}_' + \
-                            f'signal_dur_{self.signal_duration_in_sec}_' + \
-                            f'overlap_ratio_{self.overlap_ratio}_' +\
-                            f'dbu_ind_True'
-        else:
-            specs_identifier = f'anomaly_label_{self.anomaly_label}_' + \
-                            f'ds_ratio_{self.downsampling_ratio}_' + \
-                            f'signal_dur_{self.signal_duration_in_sec}_' + \
-                            f'overlap_ratio_{self.overlap_ratio}'
-
-        if self.dc_removed:
-            specs_identifier += '_dc_removed'
-
-        if self.ds_after_fft:
-            specs_identifier += '_ds_after_fft'
-
-        if self.norm_per_ch:
-            specs_identifier += '_norm_per_ch'
+        specs_identifier = f'anomaly_label_{self.anomaly_label}_' + \
+                           f'ds_ratio_{self.downsampling_ratio}_' + \
+                           f'signal_dur_{self.signal_duration_in_sec}_' + \
+                           f'overlap_ratio_{self.overlap_ratio}_' +\
+                           f'dc_removed_{self.dc_removed}_' +\
+                           f'dbu_ind_{self.dbu_ind}_' +\
+                           f'ds_after_fft_{self.ds_after_fft}_' +\
+                           f'norm_per_ch_{self.norm_per_ch}'
 
         train_dataset_pkl_file_path = \
             os.path.join(processed_folder, f'train_{specs_identifier}.pkl')
@@ -241,16 +231,19 @@ class SMSMotorData(Dataset):
 
         self.signal_list = []
         self.lbl_list = []
+        self.file_idx_list = []
 
         self.__create_pkl_files()
         self.is_truncated = False
 
     def __create_pkl_files(self):
+
+        print(f'\nPickle file path: {self.dataset_pkl_file_path} ...\n')
         if os.path.exists(self.dataset_pkl_file_path):
 
             print('\nPickle files are already generated ...\n')
 
-            (self.signal_list, self.lbl_list) = \
+            (self.signal_list, self.lbl_list, self.file_idx_list) = \
                 pickle.load(open(self.dataset_pkl_file_path, 'rb'))
             return
 
@@ -265,14 +258,19 @@ class SMSMotorData(Dataset):
 
         # TODO: may use lambdas and map for faster iteration instead of iterrows
         # LOAD NORMAL FEATURES
-        normal_features = list()
-        for _, row in df_normals.iterrows():
+        normal_features = []
+        normal_features_file_idxs = []
+
+        for file_idx, row in df_normals.iterrows():
             raw_data = row['data'][0, :].transpose([1, 0])
             cnn_signals = self.process_file_and_return_signal_windows(raw_data)
+            # Append all windows 
             for i in range(cnn_signals.shape[0]):
                 normal_features.append(cnn_signals[i])
+                normal_features_file_idxs.append(file_idx)
     
         normal_features = np.asarray(normal_features)
+        normal_features_file_idxs = np.asarray(normal_features_file_idxs)
 
         if self.norm_per_ch:
             # Keep min/max values using normal data:
@@ -296,6 +294,11 @@ class SMSMotorData(Dataset):
                         (normal_features[:, feature, signal] - self.normal_features_min[feature, signal]) / \
                         (self.normal_features_max[feature, signal] - self.normal_features_min[feature, signal])
 
+        # Add file idx dimension as last dimension before shuffle:
+        normal_features = np.expand_dims(normal_features, 3)  #(num_of_windows, 3, 512, 1)
+        for i in range(normal_features.shape[0]):
+            normal_features[i, :, :, 0] = normal_features_file_idxs[i]
+
         # Shuffles only in first dimension as intended
         np.random.shuffle(normal_features)
 
@@ -306,14 +309,18 @@ class SMSMotorData(Dataset):
 
         # TODO: may use lambdas and map for faster iteration instead of iterrows
         # LOAD ANORMAL FEATURES
-        anomaly_features = list()
-        for _, row in df_anormals.iterrows():
+        anomaly_features = []
+        anormal_features_file_idxs = []
+
+        for file_idx, row in df_anormals.iterrows():
             raw_data = row['data'][0, :].transpose([1, 0])
             cnn_signals = self.process_file_and_return_signal_windows(raw_data)
             for i in range(cnn_signals.shape[0]):
                 anomaly_features.append(cnn_signals[i])
+                anormal_features_file_idxs.append(file_idx)
 
         anomaly_features = np.asarray(anomaly_features)
+        anormal_features_file_idxs = np.asarray(normal_features_file_idxs)
 
         if self.norm_per_ch:
             # Normalize anomaly data:
@@ -329,14 +336,20 @@ class SMSMotorData(Dataset):
                         (anomaly_features[:, feature, signal] - self.normal_features_min[feature, signal]) / \
                         (self.normal_features_max[feature, signal] - self.normal_features_min[feature, signal])
 
+        # Add file idx dimension as last dimension before shuffle:
+        anomaly_features = np.expand_dims(anomaly_features, 3)  #(num_of_windows, 3, 512, 1)
+        for i in range(anomaly_features.shape[0]):
+            anomaly_features[i, :, :, 0] = anormal_features_file_idxs[i]
+
         # Shuffles only in first dimension as intended
         np.random.shuffle(anomaly_features)
 
         # ARRANGE TEST-TRAIN SPLIT AND LABELS
         if self.d_type == 'train':
-            self.lbl_list = [train_features[i, :, :] for i in range(train_features.shape[0])]
+            self.lbl_list = [train_features[i, :, :, 0] for i in range(train_features.shape[0])]
             self.signal_list = [torch.Tensor(label) for label in self.lbl_list]
             self.lbl_list = list(self.signal_list)
+            self.file_idx_list = [int(train_features[i, 0, 0, 0]) for i in range(train_features.shape[0])]
 
             if self.anomaly_label:
                 self.lbl_list = np.zeros([len(self.signal_list), 1])
@@ -349,9 +362,10 @@ class SMSMotorData(Dataset):
             else:
                 test_data = np.concatenate((test_normal_features, anomaly_features), axis=0)
 
-            self.lbl_list = [test_data[i, :, :] for i in range(test_data.shape[0])]
+            self.lbl_list = [test_data[i, :, :, 0] for i in range(test_data.shape[0])]
             self.signal_list = [torch.Tensor(label) for label in self.lbl_list]
             self.lbl_list = list(self.signal_list)
+            self.file_idx_list = [int(test_data[i, 0, 0, 0]) for i in range(test_data.shape[0])]
 
             if self.anomaly_label:
                 self.lbl_list = np.concatenate(
@@ -359,7 +373,7 @@ class SMSMotorData(Dataset):
                                      np.ones([len(anomaly_features), 1])), axis=0)
 
         # Save pickle file
-        pickle.dump((self.signal_list, self.lbl_list), open(self.dataset_pkl_file_path, 'wb'))
+        pickle.dump((self.signal_list, self.lbl_list, self.file_idx_list), open(self.dataset_pkl_file_path, 'wb'))
 
     def __len__(self):
         if self.is_truncated:
@@ -375,6 +389,7 @@ class SMSMotorData(Dataset):
             index = 0
 
         signal = self.signal_list[index]
+        file_idx = self.file_idx_list[index]
         lbl = self.lbl_list[index]
 
         if self.transform is not None:
@@ -388,7 +403,10 @@ class SMSMotorData(Dataset):
         else:
             lbl = lbl.numpy().astype(np.float32)
 
-        return signal, lbl
+        if self.include_fileidx_for_analysis:
+            return signal, lbl, file_idx
+        else:
+            return signal, lbl
 
 
 def smsmotordata_get_datasets(data, load_train=True, load_test=True,
@@ -396,10 +414,11 @@ def smsmotordata_get_datasets(data, load_train=True, load_test=True,
                           downsampling_ratio=2, 
                           signal_duration_in_sec=0.5,
                           overlap_ratio=0.75,
-                          dc_removed=True,
-                          dbu_ind=False,
+                          dc_removed=False,
+                          dbu_ind=True,
                           ds_after_fft=False,
-                          norm_per_ch=False):
+                          norm_per_ch=False,
+                          include_fileidx_for_analysis=False):
     """
     Returns SMSMotorData datasets
     """
@@ -419,7 +438,8 @@ def smsmotordata_get_datasets(data, load_train=True, load_test=True,
                                  dc_removed=dc_removed,
                                  dbu_ind=dbu_ind,
                                  ds_after_fft=ds_after_fft,
-                                 norm_per_ch=norm_per_ch)
+                                 norm_per_ch=norm_per_ch,
+                                 include_fileidx_for_analysis=include_fileidx_for_analysis)
 
         print(f'Train dataset length: {len(train_dataset)}\n')
     else:
@@ -439,7 +459,8 @@ def smsmotordata_get_datasets(data, load_train=True, load_test=True,
                                  dc_removed=dc_removed,
                                  dbu_ind=dbu_ind,
                                  ds_after_fft=ds_after_fft,
-                                 norm_per_ch=norm_per_ch)
+                                 norm_per_ch=norm_per_ch,
+                                 include_fileidx_for_analysis=include_fileidx_for_analysis)
 
         print(f'Test dataset length: {len(test_dataset)}\n')
     else:
@@ -448,7 +469,7 @@ def smsmotordata_get_datasets(data, load_train=True, load_test=True,
     return train_dataset, test_dataset
 
 
-def smsmotordata_dur_0_5_overlap_0_75_get_datasets_for_train(data, load_train=True, load_test=True, dc_removed=True, dbu_ind=False):
+def smsmotordata_dur_0_5_overlap_0_75_get_datasets_for_train(data, load_train=True, load_test=True):
     """
     Returns datasets for training purposes: labels are equivalent to signals
     Note: For training, only normal samples are used, test set here is therefore
@@ -466,14 +487,17 @@ def smsmotordata_dur_0_5_overlap_0_75_get_datasets_for_train(data, load_train=Tr
     # Making downsampling_ratio 2 for raw data sampling rate 4KHz and 0.5 sec duration
 
     return smsmotordata_get_datasets(data, load_train, load_test, anomaly_label=False,
-                                 downsampling_ratio=downsampling_ratio,
-                                 signal_duration_in_sec=signal_duration_in_sec,
-                                 overlap_ratio=overlap_ratio,
-                                 dc_removed=dc_removed,
-                                 dbu_ind=dbu_ind)
+                                     downsampling_ratio=downsampling_ratio,
+                                     signal_duration_in_sec=signal_duration_in_sec,
+                                     overlap_ratio=overlap_ratio,
+                                     dc_removed=False,
+                                     dbu_ind=False,
+                                     ds_after_fft=False,
+                                     norm_per_ch=False,
+                                     include_fileidx_for_analysis=False)
 
 
-def smsmotordata_dur_0_5_overlap_0_75_get_datasets_for_eval(data, load_train=True, load_test=True, dc_removed=True, dbu_ind=False):
+def smsmotordata_dur_0_5_overlap_0_75_get_datasets_for_eval(data, load_train=True, load_test=True):
     """
     Returns datasets for evaluation purposes: labels are anomaly and/or normal cases
     Note: In this version, test set also includes all available anormal samples
@@ -491,12 +515,14 @@ def smsmotordata_dur_0_5_overlap_0_75_get_datasets_for_eval(data, load_train=Tru
     # Making downsampling_ratio 2 for raw data sampling rate 4KHz and 0.5 sec duration
 
     return smsmotordata_get_datasets(data, load_train, load_test, anomaly_label=True,
-                                 downsampling_ratio=downsampling_ratio,
-                                 signal_duration_in_sec=signal_duration_in_sec,
-                                 overlap_ratio=overlap_ratio,
-                                 dc_removed=dc_removed,
-                                 dbu_ind=dbu_ind)
-
+                                     downsampling_ratio=downsampling_ratio,
+                                     signal_duration_in_sec=signal_duration_in_sec,
+                                     overlap_ratio=overlap_ratio,
+                                     dc_removed=False,
+                                     dbu_ind=False,
+                                     ds_after_fft=False,
+                                     norm_per_ch=False,
+                                     include_fileidx_for_analysis=False)
 
 
 def smsmotordata_dur_0_5_overlap_0_75_dbu_ind_get_datasets_for_train(data, load_train=True, load_test=True, dc_removed=True, dbu_ind=True):
@@ -517,11 +543,14 @@ def smsmotordata_dur_0_5_overlap_0_75_dbu_ind_get_datasets_for_train(data, load_
     # Making downsampling_ratio 2 for raw data sampling rate 4KHz and 0.5 sec duration
 
     return smsmotordata_get_datasets(data, load_train, load_test, anomaly_label=False,
-                                 downsampling_ratio=downsampling_ratio,
-                                 signal_duration_in_sec=signal_duration_in_sec,
-                                 overlap_ratio=overlap_ratio,
-                                 dc_removed=dc_removed,
-                                 dbu_ind=True)
+                                     downsampling_ratio=downsampling_ratio,
+                                     signal_duration_in_sec=signal_duration_in_sec,
+                                     overlap_ratio=overlap_ratio,
+                                     dc_removed=False,
+                                     dbu_ind=True,
+                                     ds_after_fft=False,
+                                     norm_per_ch=False,
+                                     include_fileidx_for_analysis=False)
 
 
 def smsmotordata_dur_0_5_overlap_0_75_dbu_ind_get_datasets_for_eval(data, load_train=True, load_test=True, dc_removed=True, dbu_ind=True):
@@ -542,13 +571,16 @@ def smsmotordata_dur_0_5_overlap_0_75_dbu_ind_get_datasets_for_eval(data, load_t
     # Making downsampling_ratio 2 for raw data sampling rate 4KHz and 0.5 sec duration
 
     return smsmotordata_get_datasets(data, load_train, load_test, anomaly_label=True,
-                                 downsampling_ratio=downsampling_ratio,
-                                 signal_duration_in_sec=signal_duration_in_sec,
-                                 overlap_ratio=overlap_ratio,
-                                 dc_removed=dc_removed,
-                                 dbu_ind=True)
+                                     downsampling_ratio=downsampling_ratio,
+                                     signal_duration_in_sec=signal_duration_in_sec,
+                                     overlap_ratio=overlap_ratio,
+                                     dc_removed=False,
+                                     dbu_ind=True,
+                                     ds_after_fft=False,
+                                     norm_per_ch=False,
+                                     include_fileidx_for_analysis=False)
 
-def smsmotordata_dur_0_5_overlap_0_75_dbu_ind_ds_after_fft_get_datasets_for_train(data, load_train=True, load_test=True, dc_removed=True):
+def smsmotordata_dur_0_5_overlap_0_75_dbu_ind_get_datasets_for_train_for_analysis(data, load_train=True, load_test=True, dc_removed=True, dbu_ind=True):
     """
     Returns datasets for training purposes: labels are equivalent to signals
     Note: For training, only normal samples are used, test set here is therefore
@@ -566,15 +598,17 @@ def smsmotordata_dur_0_5_overlap_0_75_dbu_ind_ds_after_fft_get_datasets_for_trai
     # Making downsampling_ratio 2 for raw data sampling rate 4KHz and 0.5 sec duration
 
     return smsmotordata_get_datasets(data, load_train, load_test, anomaly_label=False,
-                                 downsampling_ratio=downsampling_ratio,
-                                 signal_duration_in_sec=signal_duration_in_sec,
-                                 overlap_ratio=overlap_ratio,
-                                 dc_removed=dc_removed,
-                                 dbu_ind=True,
-                                 ds_after_fft=True)
+                                     downsampling_ratio=downsampling_ratio,
+                                     signal_duration_in_sec=signal_duration_in_sec,
+                                     overlap_ratio=overlap_ratio,
+                                     dc_removed=False,
+                                     dbu_ind=True,
+                                     ds_after_fft=False,
+                                     norm_per_ch=False,
+                                     include_fileidx_for_analysis=True)
 
 
-def smsmotordata_dur_0_5_overlap_0_75_dbu_ind_ds_after_fft_get_datasets_for_eval(data, load_train=True, load_test=True, dc_removed=True):
+def smsmotordata_dur_0_5_overlap_0_75_dbu_ind_get_datasets_for_eval_for_analysis(data, load_train=True, load_test=True, dc_removed=True, dbu_ind=True):
     """
     Returns datasets for evaluation purposes: labels are anomaly and/or normal cases
     Note: In this version, test set also includes all available anormal samples
@@ -592,120 +626,14 @@ def smsmotordata_dur_0_5_overlap_0_75_dbu_ind_ds_after_fft_get_datasets_for_eval
     # Making downsampling_ratio 2 for raw data sampling rate 4KHz and 0.5 sec duration
 
     return smsmotordata_get_datasets(data, load_train, load_test, anomaly_label=True,
-                                 downsampling_ratio=downsampling_ratio,
-                                 signal_duration_in_sec=signal_duration_in_sec,
-                                 overlap_ratio=overlap_ratio,
-                                 dc_removed=dc_removed,
-                                 dbu_ind=True,
-                                 ds_after_fft=True)
-
-
-def smsmotordata_dur_0_5_overlap_0_75_dbu_ind_ds_after_fft_withdc_get_datasets_for_train(data, load_train=True, load_test=True):
-    """
-    Returns datasets for training purposes: labels are equivalent to signals
-    Note: For training, only normal samples are used, test set here is therefore
-          part of original set of normal samples (ratio: SMSMotorData.train_ratio).
-    """
-    # NOTE: Signal duration can be modified.
-    #       But downsampling ratio is arranged such that
-    #       Each signal window contains exactly 1000 (or 1024) samples
-    #       (As after FFT, half of this window will be fed to CNN & CNN input size should be 512)
-
-
-    signal_duration_in_sec = 0.5 # Making 2000 samples per window for raw data sampling rate: 4000
-    overlap_ratio = 0.75
-    downsampling_ratio = math.ceil(signal_duration_in_sec * SMSMotorData.raw_data_sampling_rate_Hz / (SMSMotorData.cnn_1dinput_len * 2))
-    # Making downsampling_ratio 2 for raw data sampling rate 4KHz and 0.5 sec duration
-
-    return smsmotordata_get_datasets(data, load_train, load_test, anomaly_label=False,
-                                 downsampling_ratio=downsampling_ratio,
-                                 signal_duration_in_sec=signal_duration_in_sec,
-                                 overlap_ratio=overlap_ratio,
-                                 dc_removed=False,
-                                 dbu_ind=True,
-                                 ds_after_fft=True)
-
-
-def smsmotordata_dur_0_5_overlap_0_75_dbu_ind_ds_after_fft_withdc_get_datasets_for_eval(data, load_train=True, load_test=True):
-    """
-    Returns datasets for evaluation purposes: labels are anomaly and/or normal cases
-    Note: In this version, test set also includes all available anormal samples
-          along with the part of the training set with normal samples
-    """
-    # NOTE: Signal duration can be modified.
-    #       But downsampling ratio is arranged such that
-    #       Each signal window contains exactly 1000 (or 1024) samples
-    #       (As after FFT, half of this window will be fed to CNN & CNN input size should be 512)
-
-
-    signal_duration_in_sec = 0.5 # Making 2000 samples per window for raw data sampling rate: 4000
-    overlap_ratio = 0.75
-    downsampling_ratio = math.ceil(signal_duration_in_sec * SMSMotorData.raw_data_sampling_rate_Hz / (SMSMotorData.cnn_1dinput_len * 2))
-    # Making downsampling_ratio 2 for raw data sampling rate 4KHz and 0.5 sec duration
-
-    return smsmotordata_get_datasets(data, load_train, load_test, anomaly_label=True,
-                                 downsampling_ratio=downsampling_ratio,
-                                 signal_duration_in_sec=signal_duration_in_sec,
-                                 overlap_ratio=overlap_ratio,
-                                 dc_removed=False,
-                                 dbu_ind=True,
-                                 ds_after_fft=True)
-
-
-def smsmotordata_dur_0_5_overlap_0_75_dbu_ind_ds_after_fft_withdc_norm_per_ch_get_datasets_for_train(data, load_train=True, load_test=True):
-    """
-    Returns datasets for training purposes: labels are equivalent to signals
-    Note: For training, only normal samples are used, test set here is therefore
-          part of original set of normal samples (ratio: SMSMotorData.train_ratio).
-    """
-    # NOTE: Signal duration can be modified.
-    #       But downsampling ratio is arranged such that
-    #       Each signal window contains exactly 1000 (or 1024) samples
-    #       (As after FFT, half of this window will be fed to CNN & CNN input size should be 512)
-
-
-    signal_duration_in_sec = 0.5 # Making 2000 samples per window for raw data sampling rate: 4000
-    overlap_ratio = 0.75
-    downsampling_ratio = math.ceil(signal_duration_in_sec * SMSMotorData.raw_data_sampling_rate_Hz / (SMSMotorData.cnn_1dinput_len * 2))
-    # Making downsampling_ratio 2 for raw data sampling rate 4KHz and 0.5 sec duration
-
-    return smsmotordata_get_datasets(data, load_train, load_test, anomaly_label=False,
-                                 downsampling_ratio=downsampling_ratio,
-                                 signal_duration_in_sec=signal_duration_in_sec,
-                                 overlap_ratio=overlap_ratio,
-                                 dc_removed=False,
-                                 dbu_ind=True,
-                                 ds_after_fft=True,
-                                 norm_per_ch=True)
-
-
-def smsmotordata_dur_0_5_overlap_0_75_dbu_ind_ds_after_fft_withdc_norm_per_ch_get_datasets_for_eval(data, load_train=True, load_test=True):
-    """
-    Returns datasets for evaluation purposes: labels are anomaly and/or normal cases
-    Note: In this version, test set also includes all available anormal samples
-          along with the part of the training set with normal samples
-    """
-    # NOTE: Signal duration can be modified.
-    #       But downsampling ratio is arranged such that
-    #       Each signal window contains exactly 1000 (or 1024) samples
-    #       (As after FFT, half of this window will be fed to CNN & CNN input size should be 512)
-
-
-    signal_duration_in_sec = 0.5 # Making 2000 samples per window for raw data sampling rate: 4000
-    overlap_ratio = 0.75
-    downsampling_ratio = math.ceil(signal_duration_in_sec * SMSMotorData.raw_data_sampling_rate_Hz / (SMSMotorData.cnn_1dinput_len * 2))
-    # Making downsampling_ratio 2 for raw data sampling rate 4KHz and 0.5 sec duration
-
-    return smsmotordata_get_datasets(data, load_train, load_test, anomaly_label=True,
-                                 downsampling_ratio=downsampling_ratio,
-                                 signal_duration_in_sec=signal_duration_in_sec,
-                                 overlap_ratio=overlap_ratio,
-                                 dc_removed=False,
-                                 dbu_ind=True,
-                                 ds_after_fft=True,
-                                 norm_per_ch=True)
-
-
+                                     downsampling_ratio=downsampling_ratio,
+                                     signal_duration_in_sec=signal_duration_in_sec,
+                                     overlap_ratio=overlap_ratio,
+                                     dc_removed=False,
+                                     dbu_ind=True,
+                                     ds_after_fft=False,
+                                     norm_per_ch=False,
+                                     include_fileidx_for_analysis=True)
 datasets = [
     {
         'name': 'SMSMotorData_dur_0_5_overlap_0_75_ForTrain',
@@ -721,57 +649,29 @@ datasets = [
         'loader': smsmotordata_dur_0_5_overlap_0_75_get_datasets_for_eval,
     },
     {
-        'name': 'SMSMotorData_dur_0_5_overlap_0_75_dbu_ind_ForTrain',
+        'name': 'SMSMotorData_dur_0_5_overlap_0_75_dbu_True_ForTrain',
         'input': (3, 512),
         'output': ('signal'),
         'regression': True,
         'loader': smsmotordata_dur_0_5_overlap_0_75_dbu_ind_get_datasets_for_train,
     },
     {
-        'name': 'SMSMotorData_dur_0_5_overlap_0_75_dbu_ind_ForEval',
+        'name': 'SMSMotorData_dur_0_5_overlap_0_75_dbu_True_ForEval',
         'input': (3, 512),
         'output': ('normal', 'anomaly'),
         'loader': smsmotordata_dur_0_5_overlap_0_75_dbu_ind_get_datasets_for_eval,
     },
     {
-        'name': 'SMSMotorData_dur_0_5_overlap_0_75_dbu_ind_ds_after_fft_ForTrain',
+        'name': 'SMSMotorData_dur_0_5_overlap_0_75_dbu_True_ForTrain_ForAnalysis',
         'input': (3, 512),
         'output': ('signal'),
         'regression': True,
-        'loader': smsmotordata_dur_0_5_overlap_0_75_dbu_ind_ds_after_fft_get_datasets_for_train,
+        'loader': smsmotordata_dur_0_5_overlap_0_75_dbu_ind_get_datasets_for_train_for_analysis,
     },
     {
-        'name': 'SMSMotorData_dur_0_5_overlap_0_75_dbu_ind_ds_after_fft_ForEval',
+        'name': 'SMSMotorData_dur_0_5_overlap_0_75_dbu_True_ForEval_ForAnalysis',
         'input': (3, 512),
         'output': ('normal', 'anomaly'),
-        'loader': smsmotordata_dur_0_5_overlap_0_75_dbu_ind_ds_after_fft_get_datasets_for_eval,
+        'loader': smsmotordata_dur_0_5_overlap_0_75_dbu_ind_get_datasets_for_eval_for_analysis,
     },
-    {
-        'name': 'SMSMotorData_dur_0_5_overlap_0_75_dbu_ind_ds_after_fft_withdc_ForTrain',
-        'input': (3, 512),
-        'output': ('signal'),
-        'regression': True,
-        'loader': smsmotordata_dur_0_5_overlap_0_75_dbu_ind_ds_after_fft_withdc_get_datasets_for_train,
-    },
-    {
-        'name': 'SMSMotorData_dur_0_5_overlap_0_75_dbu_ind_ds_after_fft_withdc_ForEval',
-        'input': (3, 512),
-        'output': ('normal', 'anomaly'),
-        'loader': smsmotordata_dur_0_5_overlap_0_75_dbu_ind_ds_after_fft_withdc_get_datasets_for_eval,
-    },
-        {
-        'name': 'SMSMotorData_dur_0_5_overlap_0_75_dbu_ind_ds_after_fft_withdc_normPerCh_ForTrain',
-        'input': (3, 512),
-        'output': ('signal'),
-        'regression': True,
-        'loader': smsmotordata_dur_0_5_overlap_0_75_dbu_ind_ds_after_fft_withdc_norm_per_ch_get_datasets_for_train,
-    },
-    {
-        'name': 'SMSMotorData_dur_0_5_overlap_0_75_dbu_ind_ds_after_fft_withdc_normPerCh_ForEval',
-        'input': (3, 512),
-        'output': ('normal', 'anomaly'),
-        'loader': smsmotordata_dur_0_5_overlap_0_75_dbu_ind_ds_after_fft_withdc_norm_per_ch_get_datasets_for_eval,
-    },
-
-    
 ]

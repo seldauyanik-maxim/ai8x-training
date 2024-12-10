@@ -10,10 +10,6 @@ import torch
 from torch import nn
 
 import matplotlib.pyplot as plt
-import seaborn as sns
-
-sns.set_style("white")
-
 
 DECAY_FACTOR = 1
 

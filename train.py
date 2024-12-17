@@ -1567,7 +1567,7 @@ def update_old_model_params(model_path, model_new):
         torch.save(model_old, model_path)
         if msglogger:
             msglogger.info('Model `%s` is old. Missing parameters added with default values!',
-                        model_path)
+                           model_path)
         else:
             print(f'Model {model_path} is old. Missing parameters added with default values!')
 

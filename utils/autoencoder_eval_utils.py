@@ -197,11 +197,11 @@ def calc_ae_perf_metrics(reconstructions, inputs, labels, threshold, print_all=T
 
     Recall = torch.tensor(-1).to(inputs[0].device)
     Precision = torch.tensor(-1).to(inputs[0].device)
-    Accuracy = torch.tensor(-1).to(inputs[0].device) 
-    F1 = torch.tensor(-1).to(inputs[0].device) 
-    FPRate = torch.tensor(-1).to(inputs[0].device) 
+    Accuracy = torch.tensor(-1).to(inputs[0].device)
+    F1 = torch.tensor(-1).to(inputs[0].device)
+    FPRate = torch.tensor(-1).to(inputs[0].device)
 
-    BalancedAccuracy = torch.tensor(-1).to(inputs[0].device) 
+    BalancedAccuracy = torch.tensor(-1).to(inputs[0].device)
     TNRate = torch.tensor(-1).to(inputs[0].device)    # specificity (SPC), selectivity
 
     for i, inputs_batch in enumerate(inputs):

@@ -414,7 +414,7 @@ class CbM_DataFrame_Parser(Dataset):  # pylint: disable=too-many-instance-attrib
                 lbl = self.transform(lbl)
 
         if not self.label_as_signal:
-            lbl = lbl.astype(np.long)
+            lbl = lbl.astype(np.int64)
         else:
             lbl = lbl.numpy().astype(np.float32)
 

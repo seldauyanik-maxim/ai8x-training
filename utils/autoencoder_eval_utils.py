@@ -190,19 +190,19 @@ def calc_ae_perf_metrics(reconstructions, inputs, labels, threshold, print_all=T
     """
 
     loss_fn = nn.MSELoss(reduce=False)
-    FP = 0
-    FN = 0
-    TP = 0
-    TN = 0
+    FP = torch.tensor(0).to(inputs[0].device)
+    FN = torch.tensor(0).to(inputs[0].device)
+    TP = torch.tensor(0).to(inputs[0].device)
+    TN = torch.tensor(0).to(inputs[0].device)
 
-    Recall = -1
-    Precision = -1
-    Accuracy = -1
-    F1 = -1
-    FPRate = -1
+    Recall = torch.tensor(-1).to(inputs[0].device)
+    Precision = torch.tensor(-1).to(inputs[0].device)
+    Accuracy = torch.tensor(-1).to(inputs[0].device)
+    F1 = torch.tensor(-1).to(inputs[0].device)
+    FPRate = torch.tensor(-1).to(inputs[0].device)
 
-    BalancedAccuracy = -1
-    TNRate = -1   # specificity (SPC), selectivity
+    BalancedAccuracy = torch.tensor(-1).to(inputs[0].device)
+    TNRate = torch.tensor(-1).to(inputs[0].device)    # specificity (SPC), selectivity
 
     for i, inputs_batch in enumerate(inputs):
         label_batch = labels[i]

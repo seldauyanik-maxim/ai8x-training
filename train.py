@@ -1565,8 +1565,11 @@ def update_old_model_params(model_path, model_new):
         old_model_path = os.path.join(dir_path, new_file_name)
         os.rename(model_path, old_model_path)
         torch.save(model_old, model_path)
-        msglogger.info('Model `%s` is old. Missing parameters added with default values!',
-                       model_path)
+        if msglogger:
+            msglogger.info('Model `%s` is old. Missing parameters added with default values!',
+                           model_path)
+        else:
+            print(f'Model {model_path} is old. Missing parameters added with default values!')
 
 
 if __name__ == '__main__':
